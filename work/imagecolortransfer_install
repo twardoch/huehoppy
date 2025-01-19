@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+
+echo "Creating temporary directory..."
+
+cd "$(mktemp -d)" || exit 1
+
+# trap 'cd - && rm -rf "${WORK_DIR}"' EXIT
+
+WORK_DIR="$(pwd)"
+
+echo "Working in: ${WORK_DIR}"
+
+echo "brew installing system dependencies..."
+
+brew install libomp llvm octave
+
+echo "uv installing Python dependencies..."
+
+uv pip install --upgrade $1 pip wheel colortrans python-color-transfer gdown loguru pathos
+
+echo "Cloning ColorTransferLib repository..."
+
+export REPO_DIR="${WORK_DIR}/git_colortransferlib"
+
+git clone https://github.com/ImmersiveMediaLaboratory/ColorTransferLib "${REPO_DIR}"
+
+cd "${REPO_DIR}" || exit 1
+
+export CTL_DIR="${REPO_DIR}/ColorTransferLib"
+
+echo "Cleaning up __init__.py files..."
+
+rm "${CTL_DIR}/__init__.py"
+
+rm "${CTL_DIR}/Algorithms/__init__.py"
+
+rm "${CTL_DIR}/Evaluation/__init__.py"
+
+rm "${CTL_DIR}/Evaluation/__init__.py"
+
+echo "#" >"${CTL_DIR}/Options/__init__.py"
+
+echo "Updating requirements..."
+
+mv "${REPO_DIR}/requirements/requirements.txt" "${REPO_DIR}/requirements/requirements_old.txt"
+cat "${REPO_DIR}/requirements/requirements_old.txt" | sed 's/==/>=/g' | sed 's/faiss-gpu/faiss-cpu/g' >"${REPO_DIR}/requirements/requirements.txt"
+
+echo "uv installing ColorTransferLib requirements..."
+PATH="/usr/local/opt/llvm/bin:$PATH" CC="/usr/local/opt/llvm/bin/clang" CXX="/usr/local/opt/llvm/bin/clang++" CFLAGS="-I/usr/local/opt/libomp/include" CXXFLAGS="-I/usr/local/opt/libomp/include" LDFLAGS="-L/usr/local/opt/libomp/lib -lomp" uv pip install $1 -r "${REPO_DIR}/requirements/requirements.txt"
+
+echo "Cleaning unused folders..."
+for dir in TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN; do
+    echo "Removing ${dir}..."
+    rm -rf "${CTL_DIR}/Algorithms/${dir}/"
+    rm "${CTL_DIR}/Options/${dir}.json"
+done
+rm -rf "${CTL_DIR}/Evaluation/*"
+
+rm "${REPO_DIR}/setup.py"
+
+cat <<'EOF' >"${REPO_DIR}/pyproject.toml"
+[project]
+name = "ColorTransferLib"
+version = "2.0.0"
+
+[tool.setuptools]
+packages = ["ColorTransferLib"]
+
+[tool.setuptools.package-data]
+ColorTransferLib = ["Options/*.json", "*/**/*.py"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc", "__pycache__", "*.egg-info"]
+EOF
+
+echo "pip installing ColorTransferLib package from: ${REPO_DIR}"
+
+uv pip install $1 "${REPO_DIR}"
+
+cd "${WORK_DIR}" || exit 1
+
+echo "Setting up models..."
+export CTL_PKG=$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")
+
+[ ! -f Models.zip ] && echo "Downloading models..." && python -m gdown 1OAcVogeLPP7wIB8Oy7vZgSwHeuL6cjcQ
+
+echo "Extracting models..."
+
+unzip -o Models.zip -d "${CTL_PKG}"
+
+echo "#" >"${CTL_PKG}/Options/__init__.py"
+
+echo "Removing unused models..."
+
+for dir in TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN; do
+    echo "Removing ${dir}..."
+    rm -rf "${CTL_PKG}/Models/${dir}/"
+done
+
+export CTL_PKG=$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")
+rm -rf "${CTL_PKG}/Evaluation/*"
+
+echo "Verifying available methods..."
+
+python -c "from ColorTransferLib.ColorTransfer import available_methods; print('CTL methods: ' + ' '.join(available_methods))"
+
+echo "Installation complete!"
+
+echo "Check: ${WORK_DIR}"
