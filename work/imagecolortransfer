@@ -51,16 +51,15 @@ class pathos_with:
         self.pool = self.pool_class(nodes=self.nodes)
         return self.pool
 
-
-def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
-    if self.pool:
-        try:
-            self.pool.close()
-            self.pool.join(timeout=60)  # Add timeout
-            self.pool.clear()
-        except TimeoutError:
-            logger.warning("Pool cleanup timed out")
-    return False
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
+        if self.pool:
+            try:
+                self.pool.close()
+                self.pool.join(timeout=60)  # Add timeout
+                self.pool.clear()
+            except TimeoutError:
+                logger.warning("Pool cleanup timed out")
+        return False
 
 
 def get_out_dir(out_base: Path, ref_path: Path) -> Path:
