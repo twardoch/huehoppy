@@ -1,64 +1,99 @@
 #!/usr/bin/env bash
+# This script installs and configures ColorTransferLib with optimizations for macOS
+# It handles dependency management, repository setup, and cleanup of unused components
+set -euo pipefail # Exit on error, undefined vars, and pipe failures
 
-echo "Creating temporary directory..."
+# Add logging function for timestamped messages
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >&2
+}
 
-cd "$(mktemp -d)" || exit 1
+# Helper functions
+# Creates a temporary working directory and ensures cleanup on exit
+create_temp_dir() {
+    cd "$(mktemp -d)" || exit 1
+    WORK_DIR="$(pwd)"
+    trap 'cd - && rm -rf "${WORK_DIR}"' EXIT # Cleanup temp dir on script exit
+    echo "Working in: \"${WORK_DIR}\""
+}
 
-# trap 'cd - && rm -rf "${WORK_DIR}"' EXIT
+# Installs required system and Python dependencies
+# Uses Homebrew for system packages and uv for Python packages
+install_dependencies() {
+    if command -v brew >/dev/null 2>&1; then
+        # Install compiler toolchain and Octave for numerical computing
+        brew install libomp llvm octave
+    else
+        echo "Homebrew not found, skipping install."
+    fi
+    # Install Python dependencies using uv for better performance
+    uv pip install --upgrade "$1" pip wheel colortrans python-color-transfer gdown loguru pathos
+}
 
-WORK_DIR="$(pwd)"
+# Clones the ColorTransferLib repository with timeout protection
+setup_repository() {
+    export REPO_DIR="${WORK_DIR}/git_colortransferlib"
+    export CTL_DIR="${REPO_DIR}/ColorTransferLib"
 
-echo "Working in: ${WORK_DIR}"
+    # Clone with 5-minute timeout to prevent hanging
+    timeout 300 git clone https://github.com/ImmersiveMediaLaboratory/ColorTransferLib "${REPO_DIR}" || {
+        echo "Git clone timed out after 5 minutes"
+        exit 1
+    }
+    cd "${REPO_DIR}" || exit 1
+}
 
-echo "brew installing system dependencies..."
+# Removes and reinitializes __init__.py files to prevent import conflicts
+cleanup_init_files() {
+    local init_files=("${CTL_DIR}/__init__.py" "${CTL_DIR}/Algorithms/__init__.py" "${CTL_DIR}/Evaluation/__init__.py")
+    for file in "${init_files[@]}"; do
+        rm -f "$file"
+    done
+    echo "#" >"${CTL_DIR}/Options/__init__.py"
+}
 
-brew install libomp llvm octave
+# Updates requirements.txt to use more flexible version constraints
+# Replaces exact versions (==) with minimum versions (>=)
+# Switches from GPU to CPU FAISS implementation
+update_requirements() {
+    mv "${REPO_DIR}/requirements/requirements.txt" "${REPO_DIR}/requirements/requirements_old.txt"
+    sed -e 's/==/>=/g' -e 's/faiss-gpu/faiss-cpu/g' "${REPO_DIR}/requirements/requirements_old.txt" >"${REPO_DIR}/requirements/requirements.txt"
+}
 
-echo "uv installing Python dependencies..."
+# Installs the package with specific compiler settings for macOS compatibility
+install_package() {
+    local LLVM_PATH="/usr/local/opt/llvm"
+    local LIBOMP_PATH="/usr/local/opt/libomp"
 
-uv pip install --upgrade $1 pip wheel colortrans python-color-transfer gdown loguru pathos
+    # Verify required compiler paths exist
+    [[ -d "$LLVM_PATH" && -d "$LIBOMP_PATH" ]] || {
+        echo "Error: Required compiler paths not found"
+        exit 1
+    }
 
-echo "Cloning ColorTransferLib repository..."
+    # Set compiler flags for OpenMP support
+    PATH="${LLVM_PATH}/bin:$PATH" \
+        CC="${LLVM_PATH}/bin/clang" \
+        CXX="${LLVM_PATH}/bin/clang++" \
+        CFLAGS="-I${LIBOMP_PATH}/include" \
+        CXXFLAGS="-I${LIBOMP_PATH}/include" \
+        LDFLAGS="-L${LIBOMP_PATH}/lib -lomp" \
+        uv pip install "$1" -r "${REPO_DIR}/requirements/requirements.txt"
+}
 
-export REPO_DIR="${WORK_DIR}/git_colortransferlib"
+# Removes unused algorithm implementations to reduce package size
+cleanup_unused() {
+    local unused_dirs=(TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN)
+    for dir in "${unused_dirs[@]}"; do
+        rm -rf "${CTL_DIR}/Algorithms/${dir}/" "${CTL_DIR}/Options/${dir}.json"
+    done
+    rm -rf "${CTL_DIR}/Evaluation/*"
+}
 
-git clone https://github.com/ImmersiveMediaLaboratory/ColorTransferLib "${REPO_DIR}"
-
-cd "${REPO_DIR}" || exit 1
-
-export CTL_DIR="${REPO_DIR}/ColorTransferLib"
-
-echo "Cleaning up __init__.py files..."
-
-rm "${CTL_DIR}/__init__.py"
-
-rm "${CTL_DIR}/Algorithms/__init__.py"
-
-rm "${CTL_DIR}/Evaluation/__init__.py"
-
-rm "${CTL_DIR}/Evaluation/__init__.py"
-
-echo "#" >"${CTL_DIR}/Options/__init__.py"
-
-echo "Updating requirements..."
-
-mv "${REPO_DIR}/requirements/requirements.txt" "${REPO_DIR}/requirements/requirements_old.txt"
-cat "${REPO_DIR}/requirements/requirements_old.txt" | sed 's/==/>=/g' | sed 's/faiss-gpu/faiss-cpu/g' >"${REPO_DIR}/requirements/requirements.txt"
-
-echo "uv installing ColorTransferLib requirements..."
-PATH="/usr/local/opt/llvm/bin:$PATH" CC="/usr/local/opt/llvm/bin/clang" CXX="/usr/local/opt/llvm/bin/clang++" CFLAGS="-I/usr/local/opt/libomp/include" CXXFLAGS="-I/usr/local/opt/libomp/include" LDFLAGS="-L/usr/local/opt/libomp/lib -lomp" uv pip install $1 -r "${REPO_DIR}/requirements/requirements.txt"
-
-echo "Cleaning unused folders..."
-for dir in TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN; do
-    echo "Removing ${dir}..."
-    rm -rf "${CTL_DIR}/Algorithms/${dir}/"
-    rm "${CTL_DIR}/Options/${dir}.json"
-done
-rm -rf "${CTL_DIR}/Evaluation/*"
-
-rm "${REPO_DIR}/setup.py"
-
-cat <<'EOF' >"${REPO_DIR}/pyproject.toml"
+# Creates a modern pyproject.toml configuration for better packaging
+setup_modern_packaging() {
+    rm -f "${REPO_DIR}/setup.py"
+    cat <<'EOF' >"${REPO_DIR}/pyproject.toml"
 [project]
 name = "ColorTransferLib"
 version = "2.0.0"
@@ -72,38 +107,73 @@ ColorTransferLib = ["Options/*.json", "*/**/*.py"]
 [tool.setuptools.exclude-package-data]
 "*" = ["*.pyc", "__pycache__", "*.egg-info"]
 EOF
+}
+
+# Downloads and sets up model files required for color transfer algorithms
+setup_models() {
+    cd "${WORK_DIR}" || exit 1
+    # Get installed package location dynamically
+    CTL_PKG="$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")"
+
+    # Download models if not present
+    [[ -f Models.zip ]] || python -m gdown 1OAcVogeLPP7wIB8Oy7vZgSwHeuL6cjcQ
+    unzip -q -o Models.zip -d "${CTL_PKG}" || {
+        echo "Error: Failed to extract Models.zip" >&2
+        exit 1
+    }
+
+    echo "#" >"${CTL_PKG}/Options/__init__.py"
+
+    # Remove unused model files to save space
+    local unused_models=(TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN)
+    for dir in "${unused_models[@]}"; do
+        rm -rf "${CTL_PKG}/Models/${dir}/"
+    done
+
+    rm -rf "${CTL_PKG}/Evaluation/*"
+}
+
+# Error handler to ensure cleanup on failure
+cleanup_on_error() {
+    log "Installation failed, cleaning up..."
+    cd - >/dev/null 2>&1 || true
+    [[ -n "${WORK_DIR:-}" ]] && rm -rf "${WORK_DIR}"
+    exit 1
+}
+trap cleanup_on_error ERR
+
+# Main execution
+echo "Creating temporary directory..."
+create_temp_dir
+
+echo "brew installing system dependencies..."
+install_dependencies "$1"
+
+echo "Cloning ColorTransferLib repository..."
+setup_repository
+
+echo "Cleaning up __init__.py files..."
+cleanup_init_files
+
+echo "Updating requirements..."
+update_requirements
+
+echo "uv installing ColorTransferLib requirements..."
+install_package "$1"
+
+echo "Cleaning unused folders..."
+cleanup_unused
+
+setup_modern_packaging
 
 echo "pip installing ColorTransferLib package from: ${REPO_DIR}"
-
-uv pip install $1 "${REPO_DIR}"
-
-cd "${WORK_DIR}" || exit 1
+uv pip install "$1" "${REPO_DIR}"
 
 echo "Setting up models..."
-export CTL_PKG=$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")
-
-[ ! -f Models.zip ] && echo "Downloading models..." && python -m gdown 1OAcVogeLPP7wIB8Oy7vZgSwHeuL6cjcQ
-
-echo "Extracting models..."
-
-unzip -o Models.zip -d "${CTL_PKG}"
-
-echo "#" >"${CTL_PKG}/Options/__init__.py"
-
-echo "Removing unused models..."
-
-for dir in TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN; do
-    echo "Removing ${dir}..."
-    rm -rf "${CTL_PKG}/Models/${dir}/"
-done
-
-export CTL_PKG=$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")
-rm -rf "${CTL_PKG}/Evaluation/*"
+setup_models
 
 echo "Verifying available methods..."
-
 python -c "from ColorTransferLib.ColorTransfer import available_methods; print('CTL methods: ' + ' '.join(available_methods))"
 
 echo "Installation complete!"
-
 echo "Check: ${WORK_DIR}"

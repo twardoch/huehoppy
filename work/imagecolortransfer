@@ -41,6 +41,8 @@ class pathos_with:
     """
 
     def __init__(self, pool_class: type = ThreadPool, nodes: int | None = None):
+        if not issubclass(pool_class, (ProcessPool, ThreadPool)):
+            raise TypeError("pool_class must be ProcessPool or ThreadPool")
         self.pool_class = pool_class
         self.nodes = nodes if nodes is not None else mp.cpu_count()
         self.pool: ProcessPool | None = None
@@ -49,18 +51,39 @@ class pathos_with:
         self.pool = self.pool_class(nodes=self.nodes)
         return self.pool
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
-        if self.pool:
+
+def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
+    if self.pool:
+        try:
             self.pool.close()
-            self.pool.join()
+            self.pool.join(timeout=60)  # Add timeout
             self.pool.clear()
-        return False  # Propagate exceptions
+        except TimeoutError:
+            logger.warning("Pool cleanup timed out")
+    return False
 
 
 def get_out_dir(out_base: Path, ref_path: Path) -> Path:
-    out_dir = out_base / f"{ref_path.stem}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
+    """
+    Create and return output directory based on reference path.
+
+    Args:
+        out_base: Base output directory path
+        ref_path: Reference image path
+
+    Returns:
+        Path to created output directory
+
+    Raises:
+        PermissionError: If directory cannot be created
+    """
+    try:
+        out_dir = out_base / f"{ref_path.stem}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return out_dir
+    except PermissionError as e:
+        logger.error(f"Permission denied creating directory: {e}")
+        raise
 
 
 # Configure logging via Loguru + Rich
@@ -136,9 +159,7 @@ def transfer_colors_ct(
                 results = pool.map(
                     lambda src: apply_ct_to_image(src, ref_rgb, out_dir), src_paths
                 )
-            return list(
-                Path(p) for p in list(chain.from_iterable(results)) if p and p.is_file()
-            )
+            return [Path(p) for p in chain.from_iterable(results) if p and p.is_file()]
 
         start_time = time.time()
         result_paths.extend(
@@ -238,9 +259,7 @@ def transfer_colors_pct(
                 results = pool.map(
                     lambda src: apply_pct_to_image(src, ref_array, out_dir), src_paths
                 )
-            return list(
-                Path(p) for p in list(chain.from_iterable(results)) if p and p.is_file()
-            )
+            return [Path(p) for p in chain.from_iterable(results) if p and p.is_file()]
 
         start_time = time.time()
         result_paths.extend(
@@ -436,7 +455,7 @@ def transfer_colors_to_images(
         [transfer_colors_ct, transfer_colors_pct, transfer_colors_ctl],
     )
     result_paths = list(
-        Path(p) for p in list(chain.from_iterable(results)) if p and p.is_file()
+        Path(p) for p in chain.from_iterable(results) if p and p.is_file()
     )
 
     logger.info(f"Saved {len(list(result_paths))} results to {out_base}")
@@ -461,13 +480,20 @@ def cli(
     verbose: bool = False,
 ) -> None:
     """
-    Transfer colors from the reference image to the source image using multiple algorithms.
+    Transfer colors from the reference image(s) to the source image(s) using multiple algorithms.
 
+    This function serves as the command-line interface for the color transfer process. It takes
+    source images and reference images as input, applies various color transfer algorithms, and
+    saves the results to the specified output directory.
     Args:
-        sources: Source image paths (can be comma-separated string or multiple arguments)
-        reference: Reference image path
-        out_base: Output directory (default: current working directory)
-        verbose: If True, show INFO level logs, otherwise show WARNING level (default: False)
+        sources: Source image paths. Can be provided as multiple arguments or a comma-separated string.
+        reference: Reference image path(s). Can be a single path, multiple paths, or a comma-separated string.
+        out_base: Output directory for the processed images. If None, the current working directory is used.
+        all_methods: If True, applies all available color transfer methods, including experimental ones.
+        verbose: If True, displays detailed INFO level logs. If False, shows only WARNING level logs.
+
+    Returns:
+        None. The function processes the images and saves the results to the specified output directory.
     """
     src_paths: list[Path] = parse_paths(sources)
     ref_paths: list[Path] = parse_paths(reference)
@@ -483,7 +509,7 @@ def cli(
         for ref_path in ref_paths
     ]
     result_paths = list(
-        Path(p) for p in list(chain.from_iterable(results)) if p and p.is_file()
+        Path(p) for p in chain.from_iterable(results) if p and p.is_file()
     )
 
 
