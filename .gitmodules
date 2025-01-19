@@ -1,0 +1,9 @@
+[submodule "submodules/ColorTransferLib"]
+	path = submodules/ColorTransferLib
+	url = https://github.com/ImmersiveMediaLaboratory/ColorTransferLib
+[submodule "submodules/python-color-transfer"]
+	path = submodules/python-color-transfer
+	url = https://github.com/pengbo-learn/python-color-transfer
+[submodule "submodules/colortrans"]
+	path = submodules/colortrans
+	url = https://github.com/dstein64/colortrans
