@@ -55,7 +55,7 @@ class pathos_with:
         if self.pool:
             try:
                 self.pool.close()
-                self.pool.join(timeout=60)  # Add timeout
+                self.pool.join()
                 self.pool.clear()
             except TimeoutError:
                 logger.warning("Pool cleanup timed out")
