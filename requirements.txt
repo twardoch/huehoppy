@@ -1,0 +1,6 @@
+# Core requirements for huehoppy MVP
+
+numpy>=1.19
+opencv-python>=4.2
+Pillow>=9.0 # Common version, adjust if specific features are needed later
+click>=8.0 # For the CLI
