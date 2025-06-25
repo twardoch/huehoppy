@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run -s
+# /// script
+# dependencies = ["cmake", "colortrans", "colortransferlib", "Cython", "dlib", "facexlib", "fuzzy-c-means", "gdown", "h5py", "imblearn", "jax", "jaxutils", "linear_attention_transformer", "llvmlite", "lpips", "matplotlib", "ml_dtypes", "numba", "numpy", "oct2py", "open3d", "opencv-python", "phasepack", "PilloW", "pyamg", "pyfftw", "pyhull", "pyiqa", "pyntcloud", "pysaliency", "python-color-transfer", "retry", "scikit-image", "scikit-learn", "scipy", "seaborn", "setuptools", "tf_slim", "torch", "torch-optimizer", "torchfile", "torchmetrics", "torchvision", "tqdm", "transformers", "typing-extensions", "vector-quantize-pytorch", "zipfile36"]
+# ///
+# this_file: /Users/adam/Developer/vcs/github.twardoch/pub/huehoppy/work/imagecolortransfer
 
 # uv pip install --system pyiqa facexlib numba llvmlite numpy && uv pip install --system --upgrade --prerelease allow torchvision torch transformers jax jaxutils ml_dtypes numpy opencv-python  cmake Cython dlib fuzzy-c-means gdown h5py imblearn linear_attention_transformer lpips matplotlib numpy numba oct2py open3d PilloW phasepack pyamg pyfftw pyhull pyiqa pyntcloud pysaliency retry scikit-image scikit-learn scipy seaborn setuptools tensorflow tensorflow-probability tf_slim torch torchfile torchmetrics torchvision torch-optimizer tqdm typing-extensions vector-quantize-pytorch zipfile36 numpy
 # uv pip install --system colortransferlib colortrans python-color-transfer

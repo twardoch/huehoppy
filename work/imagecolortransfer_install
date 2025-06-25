@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# this_file: /Users/adam/Developer/vcs/github.twardoch/pub/huehoppy/work/imagecolortransfer_install
 # This script installs and configures ColorTransferLib with optimizations for macOS
 # It handles dependency management, repository setup, and cleanup of unused components
 set -euo pipefail # Exit on error, undefined vars, and pipe failures
@@ -14,20 +15,29 @@ create_temp_dir() {
     cd "$(mktemp -d)" || exit 1
     WORK_DIR="$(pwd)"
     trap 'cd - && rm -rf "${WORK_DIR}"' EXIT # Cleanup temp dir on script exit
-    echo "Working in: \"${WORK_DIR}\""
+    log "Working in: \"${WORK_DIR}\""
 }
 
 # Installs required system and Python dependencies
 # Uses Homebrew for system packages and uv for Python packages
 install_dependencies() {
+    local install_mode="${1:-}"
     if command -v brew >/dev/null 2>&1; then
         # Install compiler toolchain and Octave for numerical computing
+        log "Installing system dependencies with Homebrew..."
         brew install libomp llvm octave
     else
-        echo "Homebrew not found, skipping install."
+        log "Homebrew not found, skipping install."
     fi
     # Install Python dependencies using uv for better performance
-    uv pip install --upgrade "$1" pip wheel colortrans python-color-transfer gdown loguru pathos
+    # Fixed empty field error by ensuring install_mode is properly passed
+    log "Installing Python dependencies with uv..."
+    if [ -n "${install_mode}" ]; then
+        log "Using install mode: ${install_mode}"
+        uv pip install --system --upgrade "${install_mode}" pip wheel colortrans python-color-transfer gdown loguru pathos
+    else
+        uv pip install --system --upgrade pip wheel colortrans python-color-transfer gdown loguru pathos
+    fi
 }
 
 # Clones the ColorTransferLib repository with timeout protection
@@ -35,63 +45,93 @@ setup_repository() {
     export REPO_DIR="${WORK_DIR}/git_colortransferlib"
     export CTL_DIR="${REPO_DIR}/ColorTransferLib"
 
+    log "Cloning repository to ${REPO_DIR}..."
     # Clone with 5-minute timeout to prevent hanging
     timeout 300 git clone https://github.com/ImmersiveMediaLaboratory/ColorTransferLib "${REPO_DIR}" || {
-        echo "Git clone timed out after 5 minutes"
+        log "Git clone timed out after 5 minutes"
         exit 1
     }
     cd "${REPO_DIR}" || exit 1
+    log "Repository cloned successfully"
 }
 
 # Removes and reinitializes __init__.py files to prevent import conflicts
 cleanup_init_files() {
+    log "Cleaning up __init__.py files to prevent import conflicts..."
     local init_files=("${CTL_DIR}/__init__.py" "${CTL_DIR}/Algorithms/__init__.py" "${CTL_DIR}/Evaluation/__init__.py")
     for file in "${init_files[@]}"; do
         rm -f "$file"
+        log "Removed: $file"
     done
     echo "#" >"${CTL_DIR}/Options/__init__.py"
+    log "Created empty __init__.py in Options directory"
 }
 
 # Updates requirements.txt to use more flexible version constraints
 # Replaces exact versions (==) with minimum versions (>=)
 # Switches from GPU to CPU FAISS implementation
 update_requirements() {
+    log "Updating requirements.txt with flexible version constraints..."
     mv "${REPO_DIR}/requirements/requirements.txt" "${REPO_DIR}/requirements/requirements_old.txt"
     sed -e 's/==/>=/g' -e 's/faiss-gpu/faiss-cpu/g' "${REPO_DIR}/requirements/requirements_old.txt" >"${REPO_DIR}/requirements/requirements.txt"
+    log "Requirements updated: exact versions replaced with minimum versions, GPU FAISS replaced with CPU version"
 }
 
 # Installs the package with specific compiler settings for macOS compatibility
 install_package() {
+    local install_mode="${1:-}"
     local LLVM_PATH="/usr/local/opt/llvm"
     local LIBOMP_PATH="/usr/local/opt/libomp"
 
+    log "Installing package with macOS compiler optimizations..."
     # Verify required compiler paths exist
     [[ -d "$LLVM_PATH" && -d "$LIBOMP_PATH" ]] || {
-        echo "Error: Required compiler paths not found"
+        log "Error: Required compiler paths not found"
         exit 1
     }
 
+    log "Using LLVM path: ${LLVM_PATH}"
+    log "Using LibOMP path: ${LIBOMP_PATH}"
+
     # Set compiler flags for OpenMP support
-    PATH="${LLVM_PATH}/bin:$PATH" \
-        CC="${LLVM_PATH}/bin/clang" \
-        CXX="${LLVM_PATH}/bin/clang++" \
-        CFLAGS="-I${LIBOMP_PATH}/include" \
-        CXXFLAGS="-I${LIBOMP_PATH}/include" \
-        LDFLAGS="-L${LIBOMP_PATH}/lib -lomp" \
-        uv pip install "$1" -r "${REPO_DIR}/requirements/requirements.txt"
+    # Fixed empty field error by ensuring install_mode is properly passed
+    if [ -n "${install_mode}" ]; then
+        log "Installing requirements with mode: ${install_mode}"
+        PATH="${LLVM_PATH}/bin:$PATH" \
+            CC="${LLVM_PATH}/bin/clang" \
+            CXX="${LLVM_PATH}/bin/clang++" \
+            CFLAGS="-I${LIBOMP_PATH}/include" \
+            CXXFLAGS="-I${LIBOMP_PATH}/include" \
+            LDFLAGS="-L${LIBOMP_PATH}/lib -lomp" \
+            uv pip install --system "${install_mode}" -r "${REPO_DIR}/requirements/requirements.txt"
+    else
+        log "Installing requirements with default mode"
+        PATH="${LLVM_PATH}/bin:$PATH" \
+            CC="${LLVM_PATH}/bin/clang" \
+            CXX="${LLVM_PATH}/bin/clang++" \
+            CFLAGS="-I${LIBOMP_PATH}/include" \
+            CXXFLAGS="-I${LIBOMP_PATH}/include" \
+            LDFLAGS="-L${LIBOMP_PATH}/lib -lomp" \
+            uv pip install --system -r "${REPO_DIR}/requirements/requirements.txt"
+    fi
+    log "Requirements installed successfully"
 }
 
 # Removes unused algorithm implementations to reduce package size
 cleanup_unused() {
+    log "Cleaning up unused algorithm implementations to reduce package size..."
     local unused_dirs=(TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN)
     for dir in "${unused_dirs[@]}"; do
         rm -rf "${CTL_DIR}/Algorithms/${dir}/" "${CTL_DIR}/Options/${dir}.json"
+        log "Removed unused algorithm: ${dir}"
     done
     rm -rf "${CTL_DIR}/Evaluation/*"
+    log "Removed evaluation directory contents"
 }
 
 # Creates a modern pyproject.toml configuration for better packaging
 setup_modern_packaging() {
+    log "Setting up modern packaging with pyproject.toml..."
     rm -f "${REPO_DIR}/setup.py"
     cat <<'EOF' >"${REPO_DIR}/pyproject.toml"
 [project]
@@ -107,30 +147,44 @@ ColorTransferLib = ["Options/*.json", "*/**/*.py"]
 [tool.setuptools.exclude-package-data]
 "*" = ["*.pyc", "__pycache__", "*.egg-info"]
 EOF
+    log "Created pyproject.toml with modern packaging configuration"
 }
 
 # Downloads and sets up model files required for color transfer algorithms
 setup_models() {
     cd "${WORK_DIR}" || exit 1
+    log "Setting up model files required for color transfer algorithms..."
     # Get installed package location dynamically
     CTL_PKG="$(python -c "import pathlib, ColorTransferLib.Utils; print(str(pathlib.Path(ColorTransferLib.Utils.__file__).parent.parent))")"
+    log "Installed package location: ${CTL_PKG}"
 
     # Download models if not present
-    [[ -f Models.zip ]] || python -m gdown 1OAcVogeLPP7wIB8Oy7vZgSwHeuL6cjcQ
+    if [[ -f Models.zip ]]; then
+        log "Models.zip already exists, using existing file"
+    else
+        log "Downloading model files..."
+        python -m gdown 1OAcVogeLPP7wIB8Oy7vZgSwHeuL6cjcQ
+    fi
+
+    log "Extracting models to ${CTL_PKG}..."
     unzip -q -o Models.zip -d "${CTL_PKG}" || {
-        echo "Error: Failed to extract Models.zip" >&2
+        log "Error: Failed to extract Models.zip"
         exit 1
     }
 
     echo "#" >"${CTL_PKG}/Options/__init__.py"
+    log "Created empty __init__.py in Options directory"
 
     # Remove unused model files to save space
+    log "Removing unused model files to save space..."
     local unused_models=(TPS VSI NST PDF HIS RHG BCC DPT CAM EB3 PSN)
     for dir in "${unused_models[@]}"; do
         rm -rf "${CTL_PKG}/Models/${dir}/"
+        log "Removed unused model: ${dir}"
     done
 
     rm -rf "${CTL_PKG}/Evaluation/*"
+    log "Removed evaluation directory contents"
 }
 
 # Error handler to ensure cleanup on failure
@@ -143,37 +197,51 @@ cleanup_on_error() {
 trap cleanup_on_error ERR
 
 # Main execution
-echo "Creating temporary directory..."
+log "Starting ColorTransferLib installation..."
+log "Creating temporary directory..."
 create_temp_dir
 
-echo "brew installing system dependencies..."
-install_dependencies "$1"
+# Get install mode (--system, --user, etc.) or use empty string if not provided
+INSTALL_MODE="${1:-}"
+if [ -n "${INSTALL_MODE}" ]; then
+    log "Using installation mode: ${INSTALL_MODE}"
+else
+    log "Using default installation mode"
+fi
 
-echo "Cloning ColorTransferLib repository..."
+log "Installing system dependencies..."
+install_dependencies "${INSTALL_MODE}"
+
+log "Cloning ColorTransferLib repository..."
 setup_repository
 
-echo "Cleaning up __init__.py files..."
+log "Cleaning up __init__.py files..."
 cleanup_init_files
 
-echo "Updating requirements..."
+log "Updating requirements..."
 update_requirements
 
-echo "uv installing ColorTransferLib requirements..."
-install_package "$1"
+log "Installing ColorTransferLib requirements..."
+install_package "${INSTALL_MODE}"
 
-echo "Cleaning unused folders..."
+log "Cleaning unused folders..."
 cleanup_unused
 
+log "Setting up modern packaging..."
 setup_modern_packaging
 
-echo "pip installing ColorTransferLib package from: ${REPO_DIR}"
-uv pip install "$1" "${REPO_DIR}"
+log "Installing ColorTransferLib package from: ${REPO_DIR}"
+if [ -n "${INSTALL_MODE}" ]; then
+    uv pip install --system "${INSTALL_MODE}" "${REPO_DIR}"
+else
+    uv pip install --system "${REPO_DIR}"
+fi
 
-echo "Setting up models..."
+log "Setting up models..."
 setup_models
 
-echo "Verifying available methods..."
-python -c "from ColorTransferLib.ColorTransfer import available_methods; print('CTL methods: ' + ' '.join(available_methods))"
+log "Verifying available methods..."
+python -c "from ColorTransferLib.Utils.Helper import get_methods; print('CTL methods: ' + ' '.join(get_methods()))"
 
-echo "Installation complete!"
-echo "Check: ${WORK_DIR}"
+log "Installation complete!"
+log "Check: ${WORK_DIR}"

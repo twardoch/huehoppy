@@ -1,10 +1,14 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run -s
+# /// script
+# dependencies = ["opencv-python", "fire", "loguru", "pydantic", "rich", "numpy"]
+# ///
+# this_file: /Users/adam/bin/pylutek
 
 import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, TypeAlias, Union
+from typing import TypeAlias, Union
 
 import cv2
 import numpy as np
@@ -36,14 +40,14 @@ class ProcessingConfig(BaseModel):
     """Configuration for video and LUT processing."""
 
     source_target_pairs: list[tuple[Path, Path]]
-    input_video: Optional[Path] = None
-    output_video: Optional[Path] = None
-    lut_path: Optional[Path] = None
+    input_video: Path | None = None
+    output_video: Path | None = None
+    lut_path: Path | None = None
     quick: bool = False
 
     @field_validator("output_video", mode="before")
     @classmethod
-    def set_default_output(cls, v: Optional[PathLike], info) -> Optional[Path]:
+    def set_default_output(cls, v: PathLike | None, info) -> Path | None:
         if not v and "input_video" in info.data and info.data["input_video"]:
             input_path = Path(info.data["input_video"])
             lut_path = info.data.get("lut_path")
@@ -57,7 +61,7 @@ class ProcessingConfig(BaseModel):
 
     @field_validator("lut_path", mode="before")
     @classmethod
-    def set_default_lut(cls, v: Optional[PathLike], info) -> Optional[Path]:
+    def set_default_lut(cls, v: PathLike | None, info) -> Path | None:
         if (
             not v
             and "source_target_pairs" in info.data
@@ -73,8 +77,8 @@ class ProcessingConfig(BaseModel):
     @field_validator("*")
     @classmethod
     def validate_paths(
-        cls, v: Union[Optional[PathLike], list[tuple[PathLike, PathLike]]], info
-    ) -> Union[Optional[Path], list[tuple[Path, Path]]]:
+        cls, v: PathLike | None | list[tuple[PathLike, PathLike]], info
+    ) -> Path | None | list[tuple[Path, Path]]:
         """Convert all path-like fields to Path objects."""
         if isinstance(v, (str, Path)):
             return Path(v) if v else None
