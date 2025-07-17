@@ -1,0 +1,133 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC daily
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  nightly-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+      fail-fast: false  # Don't stop on first failure
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test,all]"
+
+    - name: Run comprehensive tests
+      run: |
+        pytest tests/ -v --cov=huehoppy --cov-report=xml --cov-report=term-missing --tb=short
+
+    - name: Test CLI extensively
+      run: |
+        huehoppy --help
+        huehoppy list-algorithms
+        # Add more extensive CLI tests here
+
+    - name: Performance benchmarks
+      run: |
+        pytest tests/ -v -m benchmark --benchmark-only || true
+
+    - name: Memory usage tests
+      run: |
+        # Run memory profiling tests
+        python -m pytest tests/test_integration.py::TestIntegration::test_memory_efficiency -v
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: nightly
+        name: nightly-${{ matrix.os }}-${{ matrix.python-version }}
+        fail_ci_if_error: false
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test,all]"
+
+    - name: Run safety check
+      run: |
+        pip install safety
+        safety check --json --output safety-report.json || true
+
+    - name: Upload safety report
+      uses: actions/upload-artifact@v3
+      with:
+        name: safety-report
+        path: safety-report.json
+
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Run comprehensive linting
+      run: |
+        # Run all linting tools
+        ruff check huehoppy tests --output-format=github
+        black --check huehoppy tests
+        mypy huehoppy
+
+    - name: Run complexity analysis
+      run: |
+        pip install radon
+        radon cc huehoppy --min B
+        radon mi huehoppy --min B
+
+    - name: Run duplicate code detection
+      run: |
+        pip install pylint
+        pylint huehoppy --disable=all --enable=duplicate-code || true
+
+  notify:
+    needs: [nightly-test, dependency-audit, code-quality]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+    - name: Notify on failure
+      uses: actions/github-script@v6
+      with:
+        script: |
+          github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Nightly build failed - ${new Date().toISOString().split('T')[0]}`,
+            body: `The nightly build has failed. Please check the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details.`,
+            labels: ['bug', 'nightly-failure']
+          });
