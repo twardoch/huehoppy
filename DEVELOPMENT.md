@@ -25,6 +25,11 @@ This document explains how to set up the development environment, run tests, cre
    ./scripts/test.sh
    ```
 
+5. **Set up GitHub Actions** (optional)
+   ```bash
+   ./scripts/setup-github-actions.sh
+   ```
+
 ## Development Environment Setup
 
 ### Prerequisites
@@ -167,7 +172,25 @@ docker run --rm huehoppy:latest --help
 
 ## Continuous Integration
 
-### GitHub Actions
+### GitHub Actions Setup
+
+Due to GitHub security restrictions, workflow files cannot be automatically created. Set them up manually:
+
+```bash
+# Use the setup script
+./scripts/setup-github-actions.sh
+
+# Or manually copy files
+mkdir -p .github/workflows
+cp github-workflows/*.yml .github/workflows/
+git add .github/workflows/
+git commit -m "Add GitHub Actions workflows"
+git push origin <branch-name>
+```
+
+For detailed setup instructions, see [GITHUB_ACTIONS_SETUP.md](GITHUB_ACTIONS_SETUP.md).
+
+### GitHub Actions Workflows
 
 The project includes three main workflows:
 
