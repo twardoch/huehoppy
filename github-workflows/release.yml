@@ -1,0 +1,250 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        exclude:
+          # Reduce matrix for release testing
+          - os: windows-latest
+            python-version: "3.8"
+          - os: macos-latest
+            python-version: "3.8"
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test]"
+
+    - name: Run tests
+      run: |
+        pytest tests/ -v --cov=huehoppy
+
+    - name: Test CLI
+      run: |
+        huehoppy --help
+        huehoppy list-algorithms
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Get version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Building version: $VERSION"
+
+    - name: Build package
+      run: |
+        python -m build
+
+    - name: Check package
+      run: |
+        twine check dist/*
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  build-binaries:
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            arch: x86_64
+          - os: windows-latest
+            target: windows
+            arch: x86_64
+          - os: macos-latest
+            target: macos
+            arch: x86_64
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+        pip install pyinstaller
+
+    - name: Build binary
+      run: |
+        pyinstaller --onefile --name huehoppy-${{ matrix.target }}-${{ matrix.arch }} --add-data "huehoppy:huehoppy" huehoppy/cli.py
+
+    - name: Upload binary artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: binaries-${{ matrix.target }}-${{ matrix.arch }}
+        path: dist/huehoppy-${{ matrix.target }}-${{ matrix.arch }}*
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+
+  github-release:
+    needs: [build, build-binaries, publish-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download Python packages
+      uses: actions/download-artifact@v3
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Download Linux binary
+      uses: actions/download-artifact@v3
+      with:
+        name: binaries-linux-x86_64
+        path: dist/
+
+    - name: Download Windows binary
+      uses: actions/download-artifact@v3
+      with:
+        name: binaries-windows-x86_64
+        path: dist/
+
+    - name: Download macOS binary
+      uses: actions/download-artifact@v3
+      with:
+        name: binaries-macos-x86_64
+        path: dist/
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "## What's New in v$VERSION" > release_notes.md
+        echo "" >> release_notes.md
+        echo "### Installation" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "**Python Package:**" >> release_notes.md
+        echo '```bash' >> release_notes.md
+        echo "pip install huehoppy==$VERSION" >> release_notes.md
+        echo '```' >> release_notes.md
+        echo "" >> release_notes.md
+        echo "**Binary Downloads:**" >> release_notes.md
+        echo "- Linux: \`huehoppy-linux-x86_64\`" >> release_notes.md
+        echo "- Windows: \`huehoppy-windows-x86_64.exe\`" >> release_notes.md
+        echo "- macOS: \`huehoppy-macos-x86_64\`" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Usage" >> release_notes.md
+        echo '```bash' >> release_notes.md
+        echo "huehoppy transfer source.jpg reference.jpg output.jpg" >> release_notes.md
+        echo '```' >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Changes" >> release_notes.md
+        echo "- See [CHANGELOG.md](CHANGELOG.md) for detailed changes" >> release_notes.md
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/*
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+
+  post-release:
+    needs: [github-release]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update README badges
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "Released version: $VERSION"
+        
+        # Update version badges in README if they exist
+        if [ -f "README.md" ]; then
+          sed -i "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+/version-$VERSION/g" README.md
+        fi
+
+    - name: Create post-release PR
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "chore: post-release updates for v${{ github.ref_name }}"
+        title: "Post-release updates for ${{ github.ref_name }}"
+        body: |
+          Automated post-release updates for ${{ github.ref_name }}
+          
+          - Updated version badges
+          - Ready for next development cycle
+        branch: post-release/${{ github.ref_name }}
+        delete-branch: true

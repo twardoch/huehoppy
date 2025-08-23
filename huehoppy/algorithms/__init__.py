@@ -1,0 +1,1 @@
+"""Color transfer algorithms for huehoppy."""
